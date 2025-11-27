@@ -1,0 +1,15 @@
+{
+    "indexes": [
+        {
+            "collectionGroup": "cvs",
+            "queryScope": "COLLECTION",
+            "fields": [
+                {
+                    "fieldPath": "createdAt",
+                    "order": "DESCENDING"
+                }
+            ]
+        }
+    ],
+    "fieldOverrides": []
+}

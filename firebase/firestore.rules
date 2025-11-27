@@ -1,0 +1,18 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Allow authenticated users to read/write their own documents.
+    // CVs collection: documents include { ownerId, name, email, phone, summary, resumeUrl }
+    match /cvs/{document} {
+      allow read: if true; // allow public read; change to `request.auth != null` to restrict
+      allow create: if request.auth != null;
+      allow update, delete: if request.auth != null && request.auth.uid == resource.data.ownerId;
+      // Note: for public sites you may instead allow updates by admin only.
+    }
+
+    // Default deny other accesses
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
