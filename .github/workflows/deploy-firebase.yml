@@ -31,7 +31,13 @@ jobs:
         run: flutter build web --release
 
       - name: Deploy to Firebase
+        if: ${{ secrets.FIREBASE_TOKEN != '' }}
         env:
           FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
         run: |
           firebase deploy --only hosting --token "$FIREBASE_TOKEN"
+
+      - name: Skip Firebase deploy (no token)
+        if: ${{ secrets.FIREBASE_TOKEN == '' }}
+        run: |
+          echo "FIREBASE_TOKEN secret not found; skipping Firebase deploy. To enable, add FIREBASE_TOKEN as a repository secret."
