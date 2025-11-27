@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
 import '../services/firebase_service.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:convert';
+import 'dart:typed_data';
+import 'package:file_picker/file_picker.dart';
 
 class CvFormPage extends StatefulWidget {
   final String? docId;
@@ -16,7 +20,10 @@ class _CvFormPageState extends State<CvFormPage> {
   final _emailCtrl = TextEditingController();
   final _phoneCtrl = TextEditingController();
   final _summaryCtrl = TextEditingController();
+  Uint8List? _resumeBytes;
   String? _resumeName;
+  bool _isUploading = false;
+  double _uploadProgress = 0.0;
   final FirebaseService _svc = FirebaseService();
 
   @override
@@ -41,18 +48,43 @@ class _CvFormPageState extends State<CvFormPage> {
   }
 
   Future<void> _pickFile() async {
-    // File picking requires `file_picker` and storage configuration.
-    // For now this is a placeholder so the form can still be used without file upload.
-    // You can add `file_picker` and storage upload later and uncomment implementation.
-    // ignore: avoid_print
-    print(
-      'File picker not configured. To enable, add `file_picker` and storage logic.',
+    final result = await FilePicker.platform.pickFiles(
+      withData: true,
+      allowMultiple: false,
     );
+    if (result == null) return;
+    final file = result.files.first;
+    if (file.bytes == null) return;
+    // Basic validation: allow common document types and limit size to 5 MB for direct upload.
+    final allowedExt = <String>{'pdf', 'doc', 'docx', 'txt'};
+    final ext = (file.extension ?? file.name.split('.').last).toLowerCase();
+    const maxUploadBytes = 5 * 1024 * 1024; // 5 MB
+    if (!allowedExt.contains(ext)) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Unsupported file type. Use PDF/DOC/DOCX/TXT.'),
+        ),
+      );
+      return;
+    }
+    if (file.size > maxUploadBytes) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('File too large (max 5 MB).')),
+      );
+      return;
+    }
+    setState(() {
+      _resumeBytes = file.bytes;
+      _resumeName = file.name;
+    });
   }
 
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
-    final payload = {
+
+    final basePayload = {
       'name': _nameCtrl.text.trim(),
       'email': _emailCtrl.text.trim(),
       'phone': _phoneCtrl.text.trim(),
@@ -60,15 +92,75 @@ class _CvFormPageState extends State<CvFormPage> {
       'createdAt': DateTime.now().toUtc().toIso8601String(),
     };
 
-    // Note: resume upload is not enabled in this environment. If you add
-    // `file_picker` and storage dependencies, upload here and set `resumeUrl`.
-
-    if (widget.docId == null) {
-      await _svc.addCv(payload);
+    String docId = widget.docId ?? '';
+    DocumentReference? createdRef;
+    if (docId.isEmpty) {
+      createdRef = await _svc.addCv(basePayload);
+      docId = createdRef.id;
     } else {
-      await _svc.updateCv(widget.docId!, payload);
+      await _svc.updateCv(docId, basePayload);
     }
-    if (mounted) Navigator.of(context).pop();
+
+    final payload = Map<String, dynamic>.from(basePayload);
+
+    if (_resumeBytes != null) {
+      setState(() {
+        _isUploading = true;
+        _uploadProgress = 0.0;
+      });
+      try {
+        final url = await _svc.uploadResume(
+          _resumeBytes!,
+          _resumeName ?? 'resume',
+          docId: docId,
+          onProgress: (p) {
+            // apply light smoothing for nicer UX
+            if (mounted) {
+              setState(() {
+                _uploadProgress = (_uploadProgress * 0.75 + p * 0.25);
+              });
+            }
+          },
+        );
+        payload['resumeUrl'] = url;
+        payload['resumeName'] = _resumeName ?? '';
+        await _svc.updateCv(docId, {
+          'resumeUrl': url,
+          'resumeName': _resumeName ?? '',
+        });
+      } catch (e) {
+        final String msg = e.toString();
+        if (_resumeBytes!.lengthInBytes <= 300 * 1024) {
+          payload['resumeName'] = _resumeName ?? '';
+          payload['resumeBase64'] = base64Encode(_resumeBytes!);
+          await _svc.updateCv(docId, {
+            'resumeName': payload['resumeName'],
+            'resumeBase64': payload['resumeBase64'],
+          });
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Upload failed, saved resume as base64 fallback.'),
+            ),
+          );
+        } else {
+          if (!mounted) return;
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text(msg)));
+        }
+      } finally {
+        if (mounted) {
+          setState(() {
+            _isUploading = false;
+            _uploadProgress = 0.0;
+          });
+        }
+      }
+    }
+
+    if (!mounted) return;
+    Navigator.of(context).pop();
   }
 
   @override
@@ -122,7 +214,21 @@ class _CvFormPageState extends State<CvFormPage> {
                 ],
               ),
               const SizedBox(height: 16),
-              ElevatedButton(onPressed: _save, child: const Text('Save CV')),
+              _isUploading
+                  ? Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        LinearProgressIndicator(value: _uploadProgress),
+                        const SizedBox(height: 8),
+                        Text(
+                          '${(_uploadProgress * 100).toStringAsFixed(0)}% uploading...',
+                        ),
+                      ],
+                    )
+                  : ElevatedButton(
+                      onPressed: _save,
+                      child: const Text('Save CV'),
+                    ),
             ],
           ),
         ),

@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../services/firebase_service.dart';
 import 'cv_form_page.dart';
 
@@ -45,14 +48,111 @@ class _CvListPageState extends State<CvListPage> {
                   children: [
                     Text(data['email'] ?? ''),
                     if (data['phone'] != null) Text('Phone: ${data['phone']}'),
-                    if (data['resumeUrl'] != null)
+                    if (data['resumeUrl'] != null) ...[
+                      if (kIsWeb)
+                        TextButton.icon(
+                          onPressed: () async {
+                            final url = data['resumeUrl'] as String;
+                            final messenger = ScaffoldMessenger.of(context);
+                            try {
+                              await launchUrl(
+                                Uri.parse(url),
+                                webOnlyWindowName: '_blank',
+                              );
+                            } catch (_) {
+                              await Clipboard.setData(ClipboardData(text: url));
+                              messenger.showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'Could not open preview — copied URL to clipboard',
+                                  ),
+                                ),
+                              );
+                            }
+                          },
+                          icon: const Icon(Icons.preview),
+                          label: const Text('Preview'),
+                        ),
+                      TextButton.icon(
+                        onPressed: () async {
+                          final url = data['resumeUrl'] as String;
+                          final messenger = ScaffoldMessenger.of(context);
+                          try {
+                            final uri = Uri.parse(url);
+                            final opened = await launchUrl(
+                              uri,
+                              mode: LaunchMode.externalApplication,
+                            );
+                            if (!opened) {
+                              await Clipboard.setData(ClipboardData(text: url));
+                              messenger.showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'Could not open URL — copied to clipboard',
+                                  ),
+                                ),
+                              );
+                            }
+                          } catch (_) {
+                            await Clipboard.setData(ClipboardData(text: url));
+                            messenger.showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                  'Could not open URL — copied to clipboard',
+                                ),
+                              ),
+                            );
+                          }
+                        },
+                        icon: const Icon(Icons.open_in_new),
+                        label: const Text('Open / Copy Resume URL'),
+                      ),
+                    ],
+                    if (data['resumeBase64'] != null)
                       TextButton.icon(
                         onPressed: () {
-                          // On web the resumeUrl can be opened in a new tab; mobile will open in browser.
-                          // Keep this placeholder; adding `url_launcher` dependency can improve behavior.
+                          final messenger = ScaffoldMessenger.of(context);
+                          final name = data['resumeName'] ?? 'resume';
+                          final b64 = data['resumeBase64'] as String;
+                          final sizeKb = (b64.length * 3) / 4 / 1024;
+                          showDialog(
+                            context: context,
+                            builder: (dialogContext) => AlertDialog(
+                              title: Text('Resume: $name'),
+                              content: Text(
+                                'Stored in Firestore (${sizeKb.toStringAsFixed(1)} KB) as base64.',
+                              ),
+                              actions: [
+                                TextButton(
+                                  onPressed: () async {
+                                    final navigator = Navigator.of(
+                                      dialogContext,
+                                    );
+                                    await Clipboard.setData(
+                                      ClipboardData(text: b64),
+                                    );
+                                    navigator.pop();
+                                    messenger.showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                          'Base64 copied to clipboard',
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                  child: const Text('Copy Base64'),
+                                ),
+                                TextButton(
+                                  onPressed: () =>
+                                      Navigator.of(dialogContext).pop(),
+                                  child: const Text('Close'),
+                                ),
+                              ],
+                            ),
+                          );
                         },
-                        icon: const Icon(Icons.picture_as_pdf),
-                        label: const Text('Resume'),
+                        icon: const Icon(Icons.attach_file),
+                        label: const Text('View Resume (Base64)'),
                       ),
                   ],
                 ),
